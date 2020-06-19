@@ -10,17 +10,46 @@ import git
 
 def main():
     args = parse_args()
+    values_file = f'{os.getcwd()}/erpnext/values.yaml'
+    values_dict = get_yaml_dict(values_file)
+    values_frappe_version = values_dict['socketIOImage']['tag'][1:]
+    values_erpnext_version = values_dict['pythonImage']['tag'][1:]
 
     frappe_version = git_version('frappe', args.version)
+    validate_local_and_remote_version(
+        current_version=values_frappe_version,
+        remote_version=frappe_version[1:])
+
     erpnext_version = git_version('erpnext', args.version)
+    validate_local_and_remote_version(
+        current_version=values_erpnext_version,
+        remote_version=erpnext_version[1:])
+
+    if args.ci:
+        check_change_in_versions(
+            frappe_version[1:],
+            erpnext_version[1:],
+            values_frappe_version,
+            values_erpnext_version
+        )
+
+    print('Updating Chart.yaml')
     chart_dict = update_chart(erpnext_version, args.bump_type)
     chart_version = chart_dict['version']
+
+    print('Updating values.yaml')
     update_values(frappe_version, erpnext_version)
     repo = git.Repo(os.getcwd())
     git_check_branch(repo)
+
+    print('Commit release to git')
     git_commit_release_message(repo, frappe_version, erpnext_version, chart_version)
+
+    print('Tag release to git')
     git_tag_repo(repo, chart_version)
-    git_push_all(repo)
+
+    print('Push release and tags to git remote')
+    git_push_all(repo, args.remote)
 
 
 def parse_args():
@@ -31,13 +60,24 @@ def parse_args():
         'version',
         action='store',
         type=str,
-        help='Branch suffix after version-??-??: e.g. "12"')
+        help='Branch suffix after version-??: e.g. "12"')
     parser.add_argument(
         'bump_type',
         action='store',
         type=str,
         choices=['major', 'minor', 'patch'],
-        help='Bump Type for Helm Chart: e.g. "major", "minor", "patch"')
+        help='Bump Type for Helm Chart')
+    group = parser.add_argument_group('options')
+    group.add_argument(
+        '--remote',
+        action='store',
+        type=str,
+        help='Git remote to tag and release helm chart')
+    group.add_argument(
+        '--ci',
+        action='store_true',
+        help='Part of ci run'
+    )
     return parser.parse_args()
 
 
@@ -83,8 +123,7 @@ def save_yaml_file(data, file_name):
 def update_chart(erpnext_version, bump_type):
     # Update Chart.yaml
     chart_file = f'{os.getcwd()}/erpnext/Chart.yaml'
-    chart_string = get_yaml_file(chart_file)
-    chart_dict = ruamel.yaml.round_trip_load(chart_string, preserve_quotes=True)
+    chart_dict = get_yaml_dict(chart_file)
 
     chart_dict['appVersion'] = erpnext_version
     chart_version = semantic_version.Version(chart_dict['version'])
@@ -102,8 +141,7 @@ def update_chart(erpnext_version, bump_type):
 def update_values(frappe_version, erpnext_version):
     # Update values.yaml
     values_file = f'{os.getcwd()}/erpnext/values.yaml'
-    values_string = get_yaml_file(values_file)
-    values_dict = ruamel.yaml.round_trip_load(values_string, preserve_quotes=True)
+    values_dict = get_yaml_dict(values_file)
     values_dict['nginxImage']['tag'] = erpnext_version
     values_dict['pythonImage']['tag'] = erpnext_version
     values_dict['socketIOImage']['tag'] = frappe_version
@@ -134,9 +172,59 @@ ERPNext {erpnext_version}""".format(
     repo.git.commit('-m', commit_message)
 
 
-def git_push_all(repo):
-    # hack always assumes remote is called origin
-    repo.git.push('origin', '--follow-tags')
+def git_push_all(repo, remote=None):
+    if not remote:
+        print('Available git remotes')
+        index = 1
+        for rem in repo.remotes:
+            print(f'{index} - {rem.name}')
+            index = index + 1
+
+        remote = int(input('Select remote to push: '))
+
+        try:
+            remote = repo.remotes[remote - 1].name
+        except Exception as exc:
+            print('Invalid Remote, setting remote to "origin"')
+            remote = 'origin'
+
+    git_ssh_command = os.environ.get('GIT_SSH_COMMAND')
+    if git_ssh_command:
+        repo.git.update_environment(GIT_SSH_COMMAND=git_ssh_command)
+
+    repo.git.push(remote, '--follow-tags')
+
+
+def get_yaml_dict(file_name):
+    yaml_string = get_yaml_file(file_name)
+    yaml_dict = ruamel.yaml.round_trip_load(yaml_string, preserve_quotes=True)
+    return yaml_dict
+
+
+def validate_local_and_remote_version(current_version, remote_version):
+    current_version = semantic_version.Version(current_version)
+    remote_version = semantic_version.Version(remote_version)
+    if(current_version > remote_version):
+        print("Version in values.yaml is greater than the remote version")
+        print("Release only possible for latest stable version")
+        exit(1)
+
+
+def check_change_in_versions(
+    frappe_version,
+    erpnext_version,
+    values_frappe_version,
+    values_erpnext_version):
+
+    frappe_version = semantic_version.Version(frappe_version)
+    erpnext_version = semantic_version.Version(erpnext_version)
+    values_frappe_version = semantic_version.Version(values_frappe_version)
+    values_erpnext_version = semantic_version.Version(values_erpnext_version)
+
+    if frappe_version == values_frappe_version and \
+        erpnext_version == values_erpnext_version:
+        print('No chanage in version detected during CI run, skip helm chart release')
+        exit(0)
 
 
 if __name__ == "__main__":

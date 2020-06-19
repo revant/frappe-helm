@@ -6,17 +6,17 @@ replicaCount: 1
 
 nginxImage:
   repository: frappe/erpnext-nginx
-  tag: v12.7.1
+  tag: v12.10.0
   pullPolicy: IfNotPresent
 
 pythonImage:
   repository: frappe/erpnext-worker
-  tag: v12.7.1
+  tag: v12.10.0
   pullPolicy: IfNotPresent
 
 socketIOImage:
   repository: frappe/frappe-socketio
-  tag: v12.5.1
+  tag: v12.7.1
   pullPolicy: IfNotPresent
 
 # Asset Image Env Variables
@@ -42,9 +42,6 @@ fullnameOverride: ""
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  # name:
 
 podSecurityContext:
   supplementalGroups: [1000]
