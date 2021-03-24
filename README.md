@@ -48,3 +48,5 @@ This is a release script for maintainers. It does the following:
 - Push to selected remote
 
 This will trigger travis to publish new version of helm chart.
+
+Validate Tests
